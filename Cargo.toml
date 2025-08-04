@@ -1,0 +1,57 @@
+[workspace]
+members = [
+    "keycloak",
+    "keycloak-domain", 
+    "keycloak-management-api",
+    "rust-sdk/crates/rmcp",
+    "rust-sdk/crates/rmcp-macros",
+]
+exclude = [
+    "rust-sdk/examples",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.85"
+version = "0.3.0"
+authors = ["Keycloak Suite Team"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/keycloak-suite/keycloak"
+homepage = "https://github.com/keycloak-suite/keycloak"
+readme = "README.md"
+
+[workspace.dependencies]
+# Core dependencies
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+thiserror = "1"
+async-trait = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
+
+# HTTP and web
+axum = { version = "0.8", features = ["tokio", "json"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["trace", "cors"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Utilities
+once_cell = "1"
+percent-encoding = "2.3.1"
+serde_with = "3"
+serde_urlencoded = "0.7"
+
+# Local dependencies
+keycloak = { path = "keycloak" }
+keycloak-domain = { path = "keycloak-domain" }
+rmcp = { path = "rust-sdk/crates/rmcp" }
+rmcp-macros = { path = "rust-sdk/crates/rmcp-macros" }
+
+# Additional dependencies needed by rust-sdk
+uuid = { version = "1", features = ["v4", "serde"] }
+anyhow = "1"

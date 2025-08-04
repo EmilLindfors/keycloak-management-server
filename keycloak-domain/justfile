@@ -1,0 +1,200 @@
+# Keycloak Domain Development Tasks
+
+# Default recipe - show available commands
+default:
+    @just --list
+
+# Run all tests (unit + integration)
+test:
+    cargo test
+
+# Run only unit tests (fast)
+test-unit:
+    cargo test integration_test
+
+# Run only integration tests with Keycloak (requires Docker)
+test-integration:
+    cargo test integration_tests_with_keycloak
+
+# Run integration tests with output
+test-integration-verbose:
+    cargo test integration_tests_with_keycloak -- --nocapture
+
+# Run specific integration test
+test-specific test_name:
+    cargo test integration_tests_with_keycloak::{{test_name}} -- --nocapture
+
+# Check code formatting
+fmt-check:
+    cargo fmt --check
+
+# Format code
+fmt:
+    cargo fmt
+
+# Run clippy lints
+clippy:
+    cargo clippy -- -D warnings
+
+# Run clippy with fixes
+clippy-fix:
+    cargo clippy --fix --allow-dirty --allow-staged
+
+# Build the project
+build:
+    cargo build
+
+# Build in release mode
+build-release:
+    cargo build --release
+
+# Check dependencies for security vulnerabilities
+audit:
+    cargo audit
+
+# Update dependencies
+update:
+    cargo update
+
+# Clean build artifacts
+clean:
+    cargo clean
+
+# Run comprehensive checks (format, clippy, test)
+check: fmt-check clippy test-unit
+    @echo "✅ All checks passed!"
+
+# Run CI pipeline (what would run in GitHub Actions)
+ci: fmt-check clippy test build
+    @echo "✅ CI pipeline completed successfully!"
+
+# Start Keycloak container manually (for development)
+start-keycloak:
+    @echo "Starting Keycloak for development..."
+    @echo "This will run our custom start script"
+    ./start-keycloak.sh
+
+# Stop Keycloak container
+stop-keycloak:
+    @echo "Stopping Keycloak container..."
+    ./keycloak-helpers.sh stop
+
+# Check Keycloak status
+check-keycloak:
+    @echo "Checking Keycloak status..."
+    ./keycloak-helpers.sh check
+
+# Get Keycloak admin token (for manual testing)
+get-token:
+    @echo "Getting Keycloak admin token..."
+    ./keycloak-helpers.sh token
+
+# Create test realm in running Keycloak
+create-test-realm realm_name="test-realm":
+    @echo "Creating test realm: {{realm_name}}"
+    ./keycloak-helpers.sh create-realm {{realm_name}}
+
+# Watch tests and re-run on file changes (requires cargo-watch)
+watch-tests:
+    cargo watch -x "test integration_test"
+
+# Watch integration tests (requires cargo-watch)
+watch-integration:
+    cargo watch -x "test integration_tests_with_keycloak"
+
+# Generate documentation
+docs:
+    cargo doc --open
+
+# Generate docs for dependencies too
+docs-full:
+    cargo doc --document-private-items --open
+
+# Run performance tests specifically
+test-perf:
+    cargo test test_shared_container_performance -- --nocapture
+
+# Run authentication flow tests
+test-auth:
+    cargo test test_keycloak_authentication_flow -- --nocapture
+
+# Run realm management tests
+test-realm:
+    cargo test test_realm_management_with_keycloak -- --nocapture
+
+# Run client management tests
+test-client:
+    cargo test test_client_management_with_keycloak -- --nocapture
+
+# Run user management tests
+test-user:
+    cargo test test_user_management_with_keycloak -- --nocapture
+
+# Install required development tools
+install-tools:
+    @echo "Installing development tools..."
+    cargo install cargo-watch cargo-audit
+    @echo "✅ Development tools installed!"
+
+# Show test coverage (requires cargo-tarpaulin)
+coverage:
+    cargo tarpaulin --out Html --output-dir coverage
+
+# Install coverage tool
+install-coverage:
+    cargo install cargo-tarpaulin
+
+# Benchmark tests (if any benchmark tests exist)
+bench:
+    cargo bench
+
+# Lint Justfile
+lint-just:
+    @just --fmt --unstable
+
+# Show project information
+info:
+    @echo "=== Keycloak Domain Project Info ==="
+    @echo "Project: keycloak-domain"
+    @echo "Language: Rust"
+    @echo "Testing: Unit tests + Integration tests with testcontainers"
+    @echo ""
+    @echo "Quick start:"
+    @echo "  just test-unit           # Fast unit tests"
+    @echo "  just test-integration    # Integration tests with Keycloak"
+    @echo "  just check              # Run all quality checks"
+    @echo ""
+    @echo "Development:"
+    @echo "  just start-keycloak     # Start Keycloak manually"
+    @echo "  just watch-tests        # Watch and re-run unit tests"
+    @echo "  just docs               # Generate and open documentation"
+
+# Development setup - install tools and run initial checks
+setup: install-tools
+    @echo "Running initial setup..."
+    just check
+    @echo "✅ Development environment setup complete!"
+    @echo ""
+    @echo "Next steps:"
+    @echo "  just test-integration   # Run integration tests"
+    @echo "  just start-keycloak     # Start Keycloak for development"
+
+# Full test suite with timing
+test-full:
+    @echo "=== Running Full Test Suite ==="
+    @echo "1. Unit Tests..."
+    @time just test-unit
+    @echo ""
+    @echo "2. Integration Tests..."
+    @time just test-integration
+    @echo ""
+    @echo "✅ Full test suite completed!"
+
+# Quick development cycle
+dev: fmt clippy test-unit
+    @echo "✅ Quick development cycle completed!"
+
+# Release preparation
+release-prep: clean fmt clippy test build-release
+    @echo "✅ Release preparation completed!"
+    @echo "Project is ready for release"

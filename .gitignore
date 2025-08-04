@@ -1,0 +1,41 @@
+# Rust build artifacts
+/target/
+*/target/
+**/*.rs.bk
+Cargo.lock
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment and config
+.env
+.env.local
+*.env
+
+# Test artifacts
+*.log
+
+# Docker volumes
+docker-data/
+
+# Temporary files
+*.tmp
+*.temp
+
+# Coverage reports
+coverage/
+*.profraw
+
+# Generated documentation
+/doc/
+*/doc/
+
+# MCP server runtime
+*.pid

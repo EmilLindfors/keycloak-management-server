@@ -1,0 +1,55 @@
+[package]
+name = "keycloak-domain"
+version = "0.1.0"
+edition = { workspace = true }
+description = "Shared domain layer for Keycloak integration using hexagonal architecture"
+authors = ["Keycloak Domain Team"]
+license = "MIT OR Apache-2.0"
+
+[features]
+default = []
+mcp = ["rmcp"]
+testing = ["mockall"]
+
+[dependencies]
+# Core async support
+async-trait = { workspace = true }
+tokio = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = "1"
+
+# Date/time handling
+chrono = { workspace = true }
+
+# UUID generation
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# HTTP client for Keycloak REST API
+reqwest = { workspace = true }
+
+# Keycloak REST API client
+keycloak = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Optional MCP support
+rmcp = { path = "../rust-sdk/crates/rmcp", features = ["server", "client", "macros"], optional = true }
+
+# Optional testing utilities
+mockall = { version = "0.12", optional = true }
+
+[dev-dependencies]
+tokio-test = "0.4"
+mockall = "0.12"
+# Testcontainers for integration testing
+testcontainers = "0.24"
+once_cell = { workspace = true }
+# HTTP client for testing
+reqwest = { workspace = true }
