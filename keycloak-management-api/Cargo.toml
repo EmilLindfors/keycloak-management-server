@@ -1,0 +1,41 @@
+[package]
+name = "keycloak-management-api"
+version = "0.1.0"
+edition = { workspace = true }
+
+[dependencies]
+axum = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+keycloak = { workspace = true }
+keycloak-domain = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+thiserror = { workspace = true }
+once_cell = { workspace = true }
+reqwest = { workspace = true }
+async-trait = { workspace = true }
+chrono = { workspace = true }
+
+# MCP support
+rmcp = { path = "../rust-sdk/crates/rmcp", features = ["server", "client", "macros", "transport-streamable-http-server", "transport-streamable-http-client", "schemars", "reqwest-tls-no-provider"] }
+rmcp-macros = { path = "../rust-sdk/crates/rmcp-macros" }
+
+[lib]
+name = "keycloak_management_api"
+path = "src/lib.rs"
+
+[[bin]]
+name = "keycloak-mcp-server"
+path = "src/mcp_server.rs"
+
+[[bin]]
+name = "keycloak-api-server"
+path = "src/main.rs"
+
+[[bin]]
+name = "mcp-client-example"
+path = "examples/mcp_client.rs"

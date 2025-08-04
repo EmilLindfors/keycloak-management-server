@@ -1,0 +1,19 @@
+[path."/admin/realms:post:body"]
+from_type = "String"
+rust_type = "RealmRepresentation"
+[path."/admin/realms/{realm}/partialImport:post:body"]
+from_type = "String"
+rust_type = "RealmRepresentation"
+[path."/admin/realms/{realm}/authentication/register-required-action:post:body"]
+from_type = "TypeMap<String, String>"
+rust_type = "RequiredActionProviderRepresentation"
+[path."/admin/realms/{realm}/authentication/unregistered-required-actions:get:"]
+from_type = "TypeVec<TypeMap<String, String>>"
+rust_type = "TypeVec<RequiredActionProviderRepresentation>"
+[path."/admin/realms/{realm}/identity-provider/providers/{provider_id}:get:"]
+from_type = "Value"
+rust_type = "IdentityProviderRepresentation"
+[type."ClientPolicyExecutorRepresentation:configuration"]
+rust_type = "Option<TypeMap<String, TypeValue>>"
+[type."ClientPolicyConditionRepresentation:configuration"]
+rust_type = "Option<TypeMap<String, TypeValue>>"

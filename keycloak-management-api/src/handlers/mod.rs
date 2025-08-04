@@ -1,0 +1,17 @@
+pub mod auth;
+pub mod client_advanced;
+pub mod client_roles;
+pub mod client_scopes;
+pub mod clients;
+pub mod credentials;
+pub mod events;
+pub mod groups;
+pub mod health;
+pub mod identity_providers;
+pub mod realms;
+pub mod role_mappings;
+pub mod roles;
+pub mod sessions;
+pub mod user_attributes;
+pub mod user_federation;
+pub mod users;
