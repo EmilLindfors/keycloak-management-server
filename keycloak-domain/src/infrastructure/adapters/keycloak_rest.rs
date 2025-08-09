@@ -260,6 +260,23 @@ impl<TS: KeycloakTokenSupplier + Send + Sync> KeycloakRepository for KeycloakRes
         Ok(domain_realms)
     }
 
+    async fn list_realms_with_filter(&self, filter: &RealmFilter) -> DomainResult<Vec<Realm>> {
+        let keycloak_realms = self
+            .admin
+            .get(filter.brief_representation)
+            .await
+            .map_err(|e| DomainError::ExternalService {
+                service: "Keycloak".to_string(),
+                message: format!("Failed to list realms with filter: {}", e),
+            })?;
+
+        let mut domain_realms = Vec::new();
+        for keycloak_realm in keycloak_realms {
+            domain_realms.push(self.convert_realm_from_keycloak(keycloak_realm).await?);
+        }
+        Ok(domain_realms)
+    }
+
     async fn create_realm(&self, realm: &Realm) -> DomainResult<EntityId> {
         let keycloak_realm = self.convert_realm_to_keycloak(realm).await?;
         

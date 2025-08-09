@@ -40,6 +40,7 @@ pub trait KeycloakRepository: Send + Sync {
     // Realm operations
     async fn find_realm_by_name(&self, realm: &str) -> DomainResult<Realm>;
     async fn list_realms(&self) -> DomainResult<Vec<Realm>>;
+    async fn list_realms_with_filter(&self, filter: &RealmFilter) -> DomainResult<Vec<Realm>>;
     async fn create_realm(&self, realm: &Realm) -> DomainResult<EntityId>;
     async fn update_realm(&self, realm: &Realm) -> DomainResult<()>;
     async fn delete_realm(&self, realm: &str) -> DomainResult<()>;

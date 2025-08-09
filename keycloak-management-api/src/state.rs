@@ -23,11 +23,11 @@ pub struct AppState {
     pub reqwest_client: reqwest::Client,
     // Domain services
     pub repository: Arc<dyn KeycloakRepository>,
-    pub user_service: UserManagementService<KeycloakRestAdapter<KeycloakAdminToken>>,
-    pub realm_service: RealmManagementService<KeycloakRestAdapter<KeycloakAdminToken>>,
-    pub client_service: ClientManagementService<KeycloakRestAdapter<KeycloakAdminToken>>,
-    pub group_service: GroupManagementService<KeycloakRestAdapter<KeycloakAdminToken>>,
-    pub role_service: RoleManagementService<KeycloakRestAdapter<KeycloakAdminToken>>,
+    pub user_service: UserManagementService,
+    pub realm_service: RealmManagementService,
+    pub client_service: ClientManagementService,
+    pub group_service: GroupManagementService,
+    pub role_service: RoleManagementService,
 }
 
 impl AppState {

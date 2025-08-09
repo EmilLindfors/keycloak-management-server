@@ -9,6 +9,10 @@ use rmcp::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use crate::{Config, AppState};
+use keycloak_domain::{
+    application::ports::auth::AuthorizationContext,
+    domain::entities::{UserFilter, RealmFilter, ClientFilter, GroupFilter, RoleFilter},
+};
 
 #[derive(Clone)]
 pub struct KeycloakMcpServer {
@@ -110,25 +114,26 @@ impl KeycloakMcpServer {
         })
     }
 
+    /// Create an authorization context for MCP operations
+    /// For now, using a basic admin context - should be enhanced with proper auth
+    fn create_auth_context(&self, realm: &str) -> AuthorizationContext {
+        AuthorizationContext::new(realm.to_string())
+            .with_user("mcp-admin".to_string())
+            .with_roles(vec!["admin".to_string(), "realm-admin".to_string()])
+    }
+
     #[tool(description = "List users in a realm with optional search filters")]
     async fn list_users(&self, params: ListUsersParams) -> Result<CallToolResult, McpError> {
-        let keycloak_client = &self.state.keycloak_client;
+        let auth_context = self.create_auth_context(&params.realm);
         
-        let mut query_params = Vec::new();
-        if let Some(search) = &params.search {
-            query_params.push(("search", search.as_str()));
-        }
-        if let Some(first) = params.first {
-            query_params.push(("first", &first.to_string()));
-        }
-        if let Some(max) = params.max {
-            query_params.push(("max", &max.to_string()));
-        }
+        let filter = UserFilter {
+            search: params.search,
+            first: params.first,
+            max: params.max,
+            ..Default::default()
+        };
 
-        match keycloak_client
-            .realm_users_get(&params.realm, Some(query_params))
-            .await
-        {
+        match self.state.user_service.list_users(&params.realm, &filter, &auth_context).await {
             Ok(users) => {
                 let content = serde_json::to_string_pretty(&users)
                     .map_err(|e| McpError::new(-1, format!("Serialization error: {}", e)))?;
@@ -140,21 +145,24 @@ impl KeycloakMcpServer {
 
     #[tool(description = "Create a new user in the specified realm")]
     async fn create_user(&self, params: CreateUserParams) -> Result<CallToolResult, McpError> {
-        let keycloak_client = &self.state.keycloak_client;
+        let auth_context = self.create_auth_context(&params.realm);
         
-        let mut user_rep = keycloak::types::UserRepresentation::default();
-        user_rep.username = Some(params.username);
-        user_rep.email = params.email;
-        user_rep.first_name = params.first_name;
-        user_rep.last_name = params.last_name;
-        user_rep.enabled = params.enabled;
+        let request = keycloak_domain::domain::entities::CreateUserRequest {
+            username: params.username.clone(),
+            email: params.email,
+            first_name: params.first_name,
+            last_name: params.last_name,
+            enabled: params.enabled,
+            temporary_password: params.temporary_password,
+            attributes: Default::default(),
+        };
 
-        match keycloak_client
-            .realm_users_post(&params.realm, user_rep)
-            .await
-        {
-            Ok(_) => {
-                let result = format!("User created successfully in realm '{}'", params.realm);
+        match self.state.user_service.create_user(&params.realm, &request, &auth_context).await {
+            Ok(user_id) => {
+                let result = format!(
+                    "User '{}' created successfully in realm '{}' with ID: {}", 
+                    params.username, params.realm, user_id
+                );
                 Ok(CallToolResult::success(vec![Content::text(result)]))
             }
             Err(e) => Err(McpError::new(-1, format!("Failed to create user: {}", e))),
@@ -163,12 +171,9 @@ impl KeycloakMcpServer {
 
     #[tool(description = "Get user details by user ID")]
     async fn get_user(&self, params: GetUserParams) -> Result<CallToolResult, McpError> {
-        let keycloak_client = &self.state.keycloak_client;
+        let auth_context = self.create_auth_context(&params.realm);
 
-        match keycloak_client
-            .realm_users_with_id_get(&params.realm, &params.user_id)
-            .await
-        {
+        match self.state.user_service.get_user(&params.realm, &params.user_id, &auth_context).await {
             Ok(user) => {
                 let content = serde_json::to_string_pretty(&user)
                     .map_err(|e| McpError::new(-1, format!("Serialization error: {}", e)))?;
@@ -180,9 +185,10 @@ impl KeycloakMcpServer {
 
     #[tool(description = "List all realms")]
     async fn list_realms(&self, _params: ListRealmsParams) -> Result<CallToolResult, McpError> {
-        let keycloak_client = &self.state.keycloak_client;
+        let auth_context = self.create_auth_context("master");
+        let filter = RealmFilter::default();
 
-        match keycloak_client.admin_realms_get().await {
+        match self.state.realm_service.list_realms_with_filter(&filter, &auth_context).await {
             Ok(realms) => {
                 let content = serde_json::to_string_pretty(&realms)
                     .map_err(|e| McpError::new(-1, format!("Serialization error: {}", e)))?;
@@ -194,16 +200,18 @@ impl KeycloakMcpServer {
 
     #[tool(description = "Create a new realm")]
     async fn create_realm(&self, params: CreateRealmParams) -> Result<CallToolResult, McpError> {
-        let keycloak_client = &self.state.keycloak_client;
+        let auth_context = self.create_auth_context("master");
         
-        let mut realm_rep = keycloak::types::RealmRepresentation::default();
-        realm_rep.realm = Some(params.realm.clone());
-        realm_rep.enabled = params.enabled;
-        realm_rep.display_name = params.display_name;
+        let request = keycloak_domain::domain::entities::CreateRealmRequest {
+            realm: params.realm.clone(),
+            enabled: params.enabled,
+            display_name: params.display_name,
+            ..Default::default()
+        };
 
-        match keycloak_client.admin_realms_post(realm_rep).await {
-            Ok(_) => {
-                let result = format!("Realm '{}' created successfully", params.realm);
+        match self.state.realm_service.create_realm(&request, &auth_context).await {
+            Ok(realm_id) => {
+                let result = format!("Realm '{}' created successfully with ID: {}", params.realm, realm_id);
                 Ok(CallToolResult::success(vec![Content::text(result)]))
             }
             Err(e) => Err(McpError::new(-1, format!("Failed to create realm: {}", e))),
@@ -212,18 +220,14 @@ impl KeycloakMcpServer {
 
     #[tool(description = "List clients in a realm")]
     async fn list_clients(&self, params: ListClientsParams) -> Result<CallToolResult, McpError> {
-        let keycloak_client = &self.state.keycloak_client;
+        let auth_context = self.create_auth_context(&params.realm);
         
-        let query_params = if let Some(client_id) = &params.client_id {
-            Some(vec![("clientId", client_id.as_str())])
-        } else {
-            None
+        let filter = ClientFilter {
+            client_id: params.client_id,
+            ..Default::default()
         };
 
-        match keycloak_client
-            .realm_clients_get(&params.realm, query_params)
-            .await
-        {
+        match self.state.client_service.list_clients(&params.realm, &filter, &auth_context).await {
             Ok(clients) => {
                 let content = serde_json::to_string_pretty(&clients)
                     .map_err(|e| McpError::new(-1, format!("Serialization error: {}", e)))?;
@@ -235,20 +239,19 @@ impl KeycloakMcpServer {
 
     #[tool(description = "Create a new client in the specified realm")]
     async fn create_client(&self, params: CreateClientParams) -> Result<CallToolResult, McpError> {
-        let keycloak_client = &self.state.keycloak_client;
+        let auth_context = self.create_auth_context(&params.realm);
         
-        let mut client_rep = keycloak::types::ClientRepresentation::default();
-        client_rep.client_id = Some(params.client_id);
-        client_rep.name = params.name;
-        client_rep.enabled = params.enabled;
-        client_rep.protocol = params.client_protocol;
+        let request = keycloak_domain::domain::entities::CreateClientRequest {
+            client_id: params.client_id.clone(),
+            name: params.name,
+            enabled: params.enabled,
+            protocol: params.client_protocol,
+            ..Default::default()
+        };
 
-        match keycloak_client
-            .realm_clients_post(&params.realm, client_rep)
-            .await
-        {
-            Ok(_) => {
-                let result = format!("Client created successfully in realm '{}'", params.realm);
+        match self.state.client_service.create_client(&params.realm, &request, &auth_context).await {
+            Ok(client_uuid) => {
+                let result = format!("Client '{}' created successfully in realm '{}' with ID: {}", params.client_id, params.realm, client_uuid);
                 Ok(CallToolResult::success(vec![Content::text(result)]))
             }
             Err(e) => Err(McpError::new(-1, format!("Failed to create client: {}", e))),
@@ -257,18 +260,14 @@ impl KeycloakMcpServer {
 
     #[tool(description = "List groups in a realm")]
     async fn list_groups(&self, params: ListGroupsParams) -> Result<CallToolResult, McpError> {
-        let keycloak_client = &self.state.keycloak_client;
+        let auth_context = self.create_auth_context(&params.realm);
         
-        let query_params = if let Some(search) = &params.search {
-            Some(vec![("search", search.as_str())])
-        } else {
-            None
+        let filter = GroupFilter {
+            search: params.search,
+            ..Default::default()
         };
 
-        match keycloak_client
-            .realm_groups_get(&params.realm, query_params)
-            .await
-        {
+        match self.state.group_service.list_groups(&params.realm, &filter, &auth_context).await {
             Ok(groups) => {
                 let content = serde_json::to_string_pretty(&groups)
                     .map_err(|e| McpError::new(-1, format!("Serialization error: {}", e)))?;
@@ -280,18 +279,18 @@ impl KeycloakMcpServer {
 
     #[tool(description = "Create a new group in the specified realm")]
     async fn create_group(&self, params: CreateGroupParams) -> Result<CallToolResult, McpError> {
-        let keycloak_client = &self.state.keycloak_client;
+        let auth_context = self.create_auth_context(&params.realm);
         
-        let mut group_rep = keycloak::types::GroupRepresentation::default();
-        group_rep.name = Some(params.name);
-        group_rep.path = params.path;
+        let request = keycloak_domain::domain::entities::CreateGroupRequest {
+            name: params.name.clone(),
+            path: params.path,
+            parent_id: None,
+            attributes: Default::default(),
+        };
 
-        match keycloak_client
-            .realm_groups_post(&params.realm, group_rep)
-            .await
-        {
-            Ok(_) => {
-                let result = format!("Group created successfully in realm '{}'", params.realm);
+        match self.state.group_service.create_group(&params.realm, &request, &auth_context).await {
+            Ok(group_id) => {
+                let result = format!("Group '{}' created successfully in realm '{}' with ID: {}", params.name, params.realm, group_id);
                 Ok(CallToolResult::success(vec![Content::text(result)]))
             }
             Err(e) => Err(McpError::new(-1, format!("Failed to create group: {}", e))),
@@ -300,18 +299,14 @@ impl KeycloakMcpServer {
 
     #[tool(description = "List roles in a realm")]
     async fn list_roles(&self, params: ListRolesParams) -> Result<CallToolResult, McpError> {
-        let keycloak_client = &self.state.keycloak_client;
+        let auth_context = self.create_auth_context(&params.realm);
         
-        let query_params = if let Some(search) = &params.search {
-            Some(vec![("search", search.as_str())])
-        } else {
-            None
+        let filter = RoleFilter {
+            search: params.search,
+            ..Default::default()
         };
 
-        match keycloak_client
-            .realm_roles_get(&params.realm, query_params)
-            .await
-        {
+        match self.state.role_service.list_roles(&params.realm, &filter, &auth_context).await {
             Ok(roles) => {
                 let content = serde_json::to_string_pretty(&roles)
                     .map_err(|e| McpError::new(-1, format!("Serialization error: {}", e)))?;
@@ -323,18 +318,20 @@ impl KeycloakMcpServer {
 
     #[tool(description = "Create a new role in the specified realm")]
     async fn create_role(&self, params: CreateRoleParams) -> Result<CallToolResult, McpError> {
-        let keycloak_client = &self.state.keycloak_client;
+        let auth_context = self.create_auth_context(&params.realm);
         
-        let mut role_rep = keycloak::types::RoleRepresentation::default();
-        role_rep.name = Some(params.name);
-        role_rep.description = params.description;
+        let request = keycloak_domain::domain::entities::CreateRoleRequest {
+            name: params.name.clone(),
+            description: params.description,
+            composite: Some(false),
+            client_role: Some(false),
+            container_id: params.realm.clone(),
+            attributes: Default::default(),
+        };
 
-        match keycloak_client
-            .realm_roles_post(&params.realm, role_rep)
-            .await
-        {
-            Ok(_) => {
-                let result = format!("Role created successfully in realm '{}'", params.realm);
+        match self.state.role_service.create_role(&params.realm, &request, &auth_context).await {
+            Ok(role_id) => {
+                let result = format!("Role '{}' created successfully in realm '{}' with ID: {}", params.name, params.realm, role_id);
                 Ok(CallToolResult::success(vec![Content::text(result)]))
             }
             Err(e) => Err(McpError::new(-1, format!("Failed to create role: {}", e))),
@@ -343,17 +340,15 @@ impl KeycloakMcpServer {
 
     #[tool(description = "Reset user password")]
     async fn reset_password(&self, params: ResetPasswordParams) -> Result<CallToolResult, McpError> {
-        let keycloak_client = &self.state.keycloak_client;
-        
-        let mut credential_rep = keycloak::types::CredentialRepresentation::default();
-        credential_rep.type_ = Some("password".to_string());
-        credential_rep.value = Some(params.password);
-        credential_rep.temporary = params.temporary;
+        let auth_context = self.create_auth_context(&params.realm);
 
-        match keycloak_client
-            .realm_users_with_id_reset_password_put(&params.realm, &params.user_id, credential_rep)
-            .await
-        {
+        match self.state.user_service.reset_password(
+            &params.realm, 
+            &params.user_id, 
+            &params.password, 
+            params.temporary.unwrap_or(false),
+            &auth_context
+        ).await {
             Ok(_) => {
                 let result = format!("Password reset successfully for user {} in realm '{}'", params.user_id, params.realm);
                 Ok(CallToolResult::success(vec![Content::text(result)]))

@@ -364,6 +364,24 @@ impl CreateRealmRequest {
     }
 }
 
+/// Filter for realm queries
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RealmFilter {
+    /// Return brief representation of realms (less detailed)
+    pub brief_representation: Option<bool>,
+}
+
+impl RealmFilter {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_brief_representation(mut self, brief: bool) -> Self {
+        self.brief_representation = Some(brief);
+        self
+    }
+}
+
 /// Request to update an existing realm
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateRealmRequest {

@@ -48,6 +48,26 @@ impl RealmManagementService {
         Ok(realms)
     }
 
+    /// List realms with filter
+    #[instrument(skip(self))]
+    pub async fn list_realms_with_filter(&self, filter: &RealmFilter, context: &AuthorizationContext) -> DomainResult<Vec<Realm>> {
+        // Check permissions
+        self.auth_service
+            .check_permission(context, resources::REALMS, actions::VIEW)
+            .await
+            .map_err(|_e| DomainError::AuthorizationFailed {
+                user_id: context.user_id.clone().unwrap_or_default(),
+                permission: format!("{}:{}", resources::REALMS, actions::VIEW),
+            })?;
+
+        info!("Listing realms with filter: {:?}", filter);
+
+        let realms = self.repository.list_realms_with_filter(filter).await?;
+
+        info!("Found {} realms", realms.len());
+        Ok(realms)
+    }
+
     /// Get a specific realm by name
     #[instrument(skip(self), fields(realm = %realm_name))]
     pub async fn get_realm(

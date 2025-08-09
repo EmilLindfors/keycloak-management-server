@@ -158,6 +158,9 @@ cd keycloak-management-api && cargo check
 # Verbose error info
 cargo check --verbose
 
+# ALWAYS use ripgrep instead of grep
+rg "pattern" path/  # instead of grep -r "pattern" path/
+
 # Show full type names
 cargo check --message-format=short
 
