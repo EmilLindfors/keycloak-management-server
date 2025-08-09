@@ -1,10 +1,14 @@
 use crate::{
-    application::ports::*,
+    application::{
+        ports::*,
+        services::AuthorizationHelper,
+    },
     domain::{
         entities::*,
         errors::{DomainError, DomainResult},
     },
 };
+use async_trait::async_trait;
 use std::sync::Arc;
 use tracing::{info, instrument, warn};
 
@@ -27,7 +31,16 @@ impl RoleManagementService {
             auth_service,
         }
     }
+}
 
+#[async_trait]
+impl AuthorizationHelper for RoleManagementService {
+    fn auth_service(&self) -> &Arc<dyn AuthorizationService> {
+        &self.auth_service
+    }
+}
+
+impl RoleManagementService {
     /// List roles in a realm with optional filtering
     #[instrument(skip(self), fields(realm = %realm))]
     pub async fn list_roles(
@@ -37,13 +50,7 @@ impl RoleManagementService {
         context: &AuthorizationContext,
     ) -> DomainResult<Vec<Role>> {
         // Check permissions
-        self.auth_service
-            .check_permission(context, resources::ROLES, actions::VIEW)
-            .await
-            .map_err(|_e| DomainError::AuthorizationFailed {
-                user_id: context.user_id.clone().unwrap_or_default(),
-                permission: format!("{}:{}", resources::ROLES, actions::VIEW),
-            })?;
+        self.check_permission(context, resources::ROLES, actions::VIEW).await?;
 
         info!("Listing roles in realm '{}' with filter", realm);
 
@@ -62,13 +69,7 @@ impl RoleManagementService {
         context: &AuthorizationContext,
     ) -> DomainResult<Role> {
         // Check permissions
-        self.auth_service
-            .check_permission(context, resources::ROLES, actions::VIEW)
-            .await
-            .map_err(|_e| DomainError::AuthorizationFailed {
-                user_id: context.user_id.clone().unwrap_or_default(),
-                permission: format!("{}:{}", resources::ROLES, actions::VIEW),
-            })?;
+        self.check_permission(context, resources::ROLES, actions::VIEW).await?;
 
         info!("Getting role '{}' from realm '{}'", role_name, realm);
 
@@ -91,13 +92,7 @@ impl RoleManagementService {
         context: &AuthorizationContext,
     ) -> DomainResult<EntityId> {
         // Check permissions
-        self.auth_service
-            .check_permission(context, resources::ROLES, actions::CREATE)
-            .await
-            .map_err(|_e| DomainError::AuthorizationFailed {
-                user_id: context.user_id.clone().unwrap_or_default(),
-                permission: format!("{}:{}", resources::ROLES, actions::CREATE),
-            })?;
+        self.check_permission(context, resources::ROLES, actions::CREATE).await?;
 
         info!("Creating role '{}' in realm '{}'", request.name, realm);
 
@@ -159,13 +154,7 @@ impl RoleManagementService {
         context: &AuthorizationContext,
     ) -> DomainResult<Vec<Role>> {
         // Check permissions
-        self.auth_service
-            .check_permission(context, resources::ROLES, actions::VIEW)
-            .await
-            .map_err(|_e| DomainError::AuthorizationFailed {
-                user_id: context.user_id.clone().unwrap_or_default(),
-                permission: format!("{}:{}", resources::ROLES, actions::VIEW),
-            })?;
+        self.check_permission(context, resources::ROLES, actions::VIEW).await?;
 
         info!("Getting roles for user '{}' in realm '{}'", user_id, realm);
 
@@ -199,13 +188,7 @@ impl RoleManagementService {
         context: &AuthorizationContext,
     ) -> DomainResult<i64> {
         // Check permissions
-        self.auth_service
-            .check_permission(context, resources::ROLES, actions::VIEW)
-            .await
-            .map_err(|_e| DomainError::AuthorizationFailed {
-                user_id: context.user_id.clone().unwrap_or_default(),
-                permission: format!("{}:{}", resources::ROLES, actions::VIEW),
-            })?;
+        self.check_permission(context, resources::ROLES, actions::VIEW).await?;
 
         info!("Counting roles in realm '{}'", realm);
 

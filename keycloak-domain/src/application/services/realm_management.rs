@@ -1,10 +1,15 @@
 use crate::{
-    application::ports::*,
+    application::{
+        ports::*,
+        services::AuthorizationHelper,
+    },
     domain::{
         entities::*,
         errors::{DomainError, DomainResult},
     },
+    authorize_const,
 };
+use async_trait::async_trait;
 use std::sync::Arc;
 use tracing::{info, instrument, warn};
 
@@ -27,18 +32,21 @@ impl RealmManagementService {
             auth_service,
         }
     }
+}
 
+#[async_trait]
+impl AuthorizationHelper for RealmManagementService {
+    fn auth_service(&self) -> &Arc<dyn AuthorizationService> {
+        &self.auth_service
+    }
+}
+
+impl RealmManagementService {
     /// List all realms
     #[instrument(skip(self))]
     pub async fn list_realms(&self, context: &AuthorizationContext) -> DomainResult<Vec<Realm>> {
         // Check permissions
-        self.auth_service
-            .check_permission(context, resources::REALMS, actions::VIEW)
-            .await
-            .map_err(|_e| DomainError::AuthorizationFailed {
-                user_id: context.user_id.clone().unwrap_or_default(),
-                permission: format!("{}:{}", resources::REALMS, actions::VIEW),
-            })?;
+        authorize_const!(self, context, resources::REALMS, actions::VIEW);
 
         info!("Listing all realms");
 
@@ -52,13 +60,7 @@ impl RealmManagementService {
     #[instrument(skip(self))]
     pub async fn list_realms_with_filter(&self, filter: &RealmFilter, context: &AuthorizationContext) -> DomainResult<Vec<Realm>> {
         // Check permissions
-        self.auth_service
-            .check_permission(context, resources::REALMS, actions::VIEW)
-            .await
-            .map_err(|_e| DomainError::AuthorizationFailed {
-                user_id: context.user_id.clone().unwrap_or_default(),
-                permission: format!("{}:{}", resources::REALMS, actions::VIEW),
-            })?;
+        self.check_permission(context, resources::REALMS, actions::VIEW).await?;
 
         info!("Listing realms with filter: {:?}", filter);
 
@@ -76,13 +78,7 @@ impl RealmManagementService {
         context: &AuthorizationContext,
     ) -> DomainResult<Realm> {
         // Check permissions
-        self.auth_service
-            .check_permission(context, resources::REALMS, actions::VIEW)
-            .await
-            .map_err(|_e| DomainError::AuthorizationFailed {
-                user_id: context.user_id.clone().unwrap_or_default(),
-                permission: format!("{}:{}", resources::REALMS, actions::VIEW),
-            })?;
+        self.check_permission(context, resources::REALMS, actions::VIEW).await?;
 
         info!("Getting realm '{}'", realm_name);
 
@@ -100,13 +96,7 @@ impl RealmManagementService {
         context: &AuthorizationContext,
     ) -> DomainResult<EntityId> {
         // Check permissions
-        self.auth_service
-            .check_permission(context, resources::REALMS, actions::CREATE)
-            .await
-            .map_err(|_e| DomainError::AuthorizationFailed {
-                user_id: context.user_id.clone().unwrap_or_default(),
-                permission: format!("{}:{}", resources::REALMS, actions::CREATE),
-            })?;
+        self.check_permission(context, resources::REALMS, actions::CREATE).await?;
 
         info!("Creating realm '{}'", request.realm);
 
@@ -152,13 +142,7 @@ impl RealmManagementService {
         context: &AuthorizationContext,
     ) -> DomainResult<()> {
         // Check permissions
-        self.auth_service
-            .check_permission(context, resources::REALMS, actions::UPDATE)
-            .await
-            .map_err(|_e| DomainError::AuthorizationFailed {
-                user_id: context.user_id.clone().unwrap_or_default(),
-                permission: format!("{}:{}", resources::REALMS, actions::UPDATE),
-            })?;
+        self.check_permission(context, resources::REALMS, actions::UPDATE).await?;
 
         info!("Updating realm '{}'", realm_name);
 
@@ -202,13 +186,7 @@ impl RealmManagementService {
         context: &AuthorizationContext,
     ) -> DomainResult<()> {
         // Check permissions
-        self.auth_service
-            .check_permission(context, resources::REALMS, actions::DELETE)
-            .await
-            .map_err(|_e| DomainError::AuthorizationFailed {
-                user_id: context.user_id.clone().unwrap_or_default(),
-                permission: format!("{}:{}", resources::REALMS, actions::DELETE),
-            })?;
+        self.check_permission(context, resources::REALMS, actions::DELETE).await?;
 
         info!("Deleting realm '{}'", realm_name);
 
@@ -257,13 +235,7 @@ impl RealmManagementService {
         context: &AuthorizationContext,
     ) -> DomainResult<()> {
         // Check permissions
-        self.auth_service
-            .check_permission(context, resources::REALMS, actions::UPDATE)
-            .await
-            .map_err(|_e| DomainError::AuthorizationFailed {
-                user_id: context.user_id.clone().unwrap_or_default(),
-                permission: format!("{}:{}", resources::REALMS, actions::UPDATE),
-            })?;
+        self.check_permission(context, resources::REALMS, actions::UPDATE).await?;
 
         info!(
             "Setting realm '{}' enabled status to {}",
@@ -332,13 +304,7 @@ impl RealmManagementService {
         context: &AuthorizationContext,
     ) -> DomainResult<()> {
         // Check permissions
-        self.auth_service
-            .check_permission(context, resources::REALMS, actions::UPDATE)
-            .await
-            .map_err(|_e| DomainError::AuthorizationFailed {
-                user_id: context.user_id.clone().unwrap_or_default(),
-                permission: format!("{}:{}", resources::REALMS, actions::UPDATE),
-            })?;
+        self.check_permission(context, resources::REALMS, actions::UPDATE).await?;
 
         info!("Configuring security settings for realm '{}'", realm_name);
 
@@ -418,13 +384,7 @@ impl RealmManagementService {
         context: &AuthorizationContext,
     ) -> DomainResult<EntityId> {
         // Check permissions
-        self.auth_service
-            .check_permission(context, resources::REALMS, actions::CREATE)
-            .await
-            .map_err(|_e| DomainError::AuthorizationFailed {
-                user_id: context.user_id.clone().unwrap_or_default(),
-                permission: format!("{}:{}", resources::REALMS, actions::CREATE),
-            })?;
+        self.check_permission(context, resources::REALMS, actions::CREATE).await?;
 
         info!("Importing realm '{}'", realm_data.realm);
 
@@ -468,13 +428,7 @@ impl RealmManagementService {
         context: &AuthorizationContext,
     ) -> DomainResult<Realm> {
         // Check permissions
-        self.auth_service
-            .check_permission(context, resources::REALMS, actions::VIEW)
-            .await
-            .map_err(|_e| DomainError::AuthorizationFailed {
-                user_id: context.user_id.clone().unwrap_or_default(),
-                permission: format!("{}:{}", resources::REALMS, actions::VIEW),
-            })?;
+        self.check_permission(context, resources::REALMS, actions::VIEW).await?;
 
         info!("Exporting realm '{}'", realm_name);
 

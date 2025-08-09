@@ -1,12 +1,17 @@
 use crate::{
-    application::ports::*,
+    application::{
+        ports::*,
+        services::AuthorizationHelper,
+    },
     domain::{
         entities::*,
         errors::{DomainError, DomainResult},
     },
 };
+use async_trait::async_trait;
 use std::sync::Arc;
 use tracing::{info, instrument, warn};
+use uuid::Uuid;
 
 /// User management service implementing business use cases
 pub struct UserManagementService {
@@ -27,7 +32,16 @@ impl UserManagementService {
             auth_service,
         }
     }
+}
 
+#[async_trait]
+impl AuthorizationHelper for UserManagementService {
+    fn auth_service(&self) -> &Arc<dyn AuthorizationService> {
+        &self.auth_service
+    }
+}
+
+impl UserManagementService {
     /// List users in a realm with optional filtering
     #[instrument(skip(self), fields(realm = %realm))]
     pub async fn list_users(
@@ -37,13 +51,7 @@ impl UserManagementService {
         context: &AuthorizationContext,
     ) -> DomainResult<Vec<User>> {
         // Check permissions
-        self.auth_service
-            .check_permission(context, resources::USERS, actions::VIEW)
-            .await
-            .map_err(|_e| DomainError::AuthorizationFailed {
-                user_id: context.user_id.clone().unwrap_or_default(),
-                permission: format!("{}:{}", resources::USERS, actions::VIEW),
-            })?;
+        self.check_permission(context, resources::USERS, actions::VIEW).await?;
 
         info!("Listing users in realm '{}' with filter", realm);
 
@@ -62,13 +70,7 @@ impl UserManagementService {
         context: &AuthorizationContext,
     ) -> DomainResult<User> {
         // Check permissions
-        self.auth_service
-            .check_permission(context, resources::USERS, actions::VIEW)
-            .await
-            .map_err(|_e| DomainError::AuthorizationFailed {
-                user_id: context.user_id.clone().unwrap_or_default(),
-                permission: format!("{}:{}", resources::USERS, actions::VIEW),
-            })?;
+        self.check_permission(context, resources::USERS, actions::VIEW).await?;
 
         info!("Getting user '{}' from realm '{}'", user_id, realm);
 
@@ -82,6 +84,34 @@ impl UserManagementService {
         Ok(user)
     }
 
+    /// Find user by username
+    #[instrument(skip(self), fields(realm = %realm, username = %username))]
+    pub async fn find_user_by_username(
+        &self,
+        realm: &str,
+        username: &str,
+        context: &AuthorizationContext,
+    ) -> DomainResult<Option<User>> {
+        // Check permissions
+        self.check_permission(context, resources::USERS, actions::VIEW).await?;
+
+        info!("Finding user '{}' in realm '{}'", username, realm);
+
+        let user = self.repository.find_user_by_username(realm, username).await?;
+
+        if let Some(ref found_user) = user {
+            info!(
+                "Found user '{}' ({})",
+                found_user.username,
+                found_user.id.as_ref().map(|id| id.as_str()).unwrap_or("unknown")
+            );
+        } else {
+            info!("User '{}' not found in realm '{}'", username, realm);
+        }
+        
+        Ok(user)
+    }
+
     /// Create a new user
     #[instrument(skip(self, request), fields(realm = %realm, username = %request.username))]
     pub async fn create_user(
@@ -91,13 +121,7 @@ impl UserManagementService {
         context: &AuthorizationContext,
     ) -> DomainResult<EntityId> {
         // Check permissions
-        self.auth_service
-            .check_permission(context, resources::USERS, actions::CREATE)
-            .await
-            .map_err(|_e| DomainError::AuthorizationFailed {
-                user_id: context.user_id.clone().unwrap_or_default(),
-                permission: format!("{}:{}", resources::USERS, actions::CREATE),
-            })?;
+        self.check_permission(context, resources::USERS, actions::CREATE).await?;
 
         info!("Creating user '{}' in realm '{}'", request.username, realm);
 
@@ -151,7 +175,7 @@ impl UserManagementService {
         .with_metadata(
             EventMetadata::new()
                 .with_user_id(context.user_id.clone().unwrap_or_default())
-                .with_correlation_id(uuid::Uuid::new_v4().to_string()),
+                .with_correlation_id(Uuid::new_v4().to_string()),
         );
 
         if let Err(e) = self.event_publisher.publish(event).await {
@@ -175,13 +199,7 @@ impl UserManagementService {
         context: &AuthorizationContext,
     ) -> DomainResult<()> {
         // Check permissions
-        self.auth_service
-            .check_permission(context, resources::USERS, actions::UPDATE)
-            .await
-            .map_err(|_e| DomainError::AuthorizationFailed {
-                user_id: context.user_id.clone().unwrap_or_default(),
-                permission: format!("{}:{}", resources::USERS, actions::UPDATE),
-            })?;
+        self.check_permission(context, resources::USERS, actions::UPDATE).await?;
 
         info!("Updating user '{}' in realm '{}'", user_id, realm);
 
@@ -237,7 +255,7 @@ impl UserManagementService {
             .with_metadata(
                 EventMetadata::new()
                     .with_user_id(context.user_id.clone().unwrap_or_default())
-                    .with_correlation_id(uuid::Uuid::new_v4().to_string()),
+                    .with_correlation_id(Uuid::new_v4().to_string()),
             );
 
             if let Err(e) = self.event_publisher.publish(event).await {
@@ -258,13 +276,7 @@ impl UserManagementService {
         context: &AuthorizationContext,
     ) -> DomainResult<()> {
         // Check permissions
-        self.auth_service
-            .check_permission(context, resources::USERS, actions::DELETE)
-            .await
-            .map_err(|_e| DomainError::AuthorizationFailed {
-                user_id: context.user_id.clone().unwrap_or_default(),
-                permission: format!("{}:{}", resources::USERS, actions::DELETE),
-            })?;
+        self.check_permission(context, resources::USERS, actions::DELETE).await?;
 
         info!("Deleting user '{}' from realm '{}'", user_id, realm);
 
@@ -283,7 +295,7 @@ impl UserManagementService {
         .with_metadata(
             EventMetadata::new()
                 .with_user_id(context.user_id.clone().unwrap_or_default())
-                .with_correlation_id(uuid::Uuid::new_v4().to_string()),
+                .with_correlation_id(Uuid::new_v4().to_string()),
         );
 
         if let Err(e) = self.event_publisher.publish(event).await {
@@ -305,13 +317,7 @@ impl UserManagementService {
         context: &AuthorizationContext,
     ) -> DomainResult<()> {
         // Check permissions
-        self.auth_service
-            .check_permission(context, resources::USERS, actions::UPDATE)
-            .await
-            .map_err(|_e| DomainError::AuthorizationFailed {
-                user_id: context.user_id.clone().unwrap_or_default(),
-                permission: format!("{}:{}", resources::USERS, actions::UPDATE),
-            })?;
+        self.check_permission(context, resources::USERS, actions::UPDATE).await?;
 
         info!(
             "Resetting password for user '{}' in realm '{}' (temporary: {})",
@@ -346,7 +352,7 @@ impl UserManagementService {
         .with_metadata(
             EventMetadata::new()
                 .with_user_id(context.user_id.clone().unwrap_or_default())
-                .with_correlation_id(uuid::Uuid::new_v4().to_string()),
+                .with_correlation_id(Uuid::new_v4().to_string()),
         );
 
         if let Err(e) = self.event_publisher.publish(event).await {
@@ -367,13 +373,7 @@ impl UserManagementService {
         context: &AuthorizationContext,
     ) -> DomainResult<()> {
         // Check permissions
-        self.auth_service
-            .check_permission(context, resources::USERS, actions::MANAGE_GROUP_MEMBERSHIP)
-            .await
-            .map_err(|_e| DomainError::AuthorizationFailed {
-                user_id: context.user_id.clone().unwrap_or_default(),
-                permission: format!("{}:{}", resources::USERS, actions::MANAGE_GROUP_MEMBERSHIP),
-            })?;
+        self.check_permission(context, resources::USERS, actions::MANAGE_GROUP_MEMBERSHIP).await?;
 
         info!(
             "Adding user '{}' to groups {:?} in realm '{}'",
@@ -403,7 +403,7 @@ impl UserManagementService {
             .with_metadata(
                 EventMetadata::new()
                     .with_user_id(context.user_id.clone().unwrap_or_default())
-                    .with_correlation_id(uuid::Uuid::new_v4().to_string()),
+                    .with_correlation_id(Uuid::new_v4().to_string()),
             );
 
             if let Err(e) = self.event_publisher.publish(event).await {
@@ -429,13 +429,7 @@ impl UserManagementService {
         context: &AuthorizationContext,
     ) -> DomainResult<()> {
         // Check permissions
-        self.auth_service
-            .check_permission(context, resources::USERS, actions::MANAGE_GROUP_MEMBERSHIP)
-            .await
-            .map_err(|_e| DomainError::AuthorizationFailed {
-                user_id: context.user_id.clone().unwrap_or_default(),
-                permission: format!("{}:{}", resources::USERS, actions::MANAGE_GROUP_MEMBERSHIP),
-            })?;
+        self.check_permission(context, resources::USERS, actions::MANAGE_GROUP_MEMBERSHIP).await?;
 
         info!(
             "Removing user '{}' from group '{}' in realm '{}'",
@@ -461,7 +455,7 @@ impl UserManagementService {
         .with_metadata(
             EventMetadata::new()
                 .with_user_id(context.user_id.clone().unwrap_or_default())
-                .with_correlation_id(uuid::Uuid::new_v4().to_string()),
+                .with_correlation_id(Uuid::new_v4().to_string()),
         );
 
         if let Err(e) = self.event_publisher.publish(event).await {
@@ -484,13 +478,7 @@ impl UserManagementService {
         context: &AuthorizationContext,
     ) -> DomainResult<Vec<Group>> {
         // Check permissions
-        self.auth_service
-            .check_permission(context, resources::USERS, actions::VIEW)
-            .await
-            .map_err(|_e| DomainError::AuthorizationFailed {
-                user_id: context.user_id.clone().unwrap_or_default(),
-                permission: format!("{}:{}", resources::USERS, actions::VIEW),
-            })?;
+        self.check_permission(context, resources::USERS, actions::VIEW).await?;
 
         info!("Getting groups for user '{}' in realm '{}'", user_id, realm);
 
@@ -508,13 +496,7 @@ impl UserManagementService {
         context: &AuthorizationContext,
     ) -> DomainResult<i64> {
         // Check permissions
-        self.auth_service
-            .check_permission(context, resources::USERS, actions::VIEW)
-            .await
-            .map_err(|_e| DomainError::AuthorizationFailed {
-                user_id: context.user_id.clone().unwrap_or_default(),
-                permission: format!("{}:{}", resources::USERS, actions::VIEW),
-            })?;
+        self.check_permission(context, resources::USERS, actions::VIEW).await?;
 
         info!("Counting users in realm '{}'", realm);
 

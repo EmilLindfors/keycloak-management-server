@@ -179,7 +179,7 @@ impl std::fmt::Display for EventType {
 }
 
 /// Aggregate types that can emit events
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum AggregateType {
     User,
     Realm,

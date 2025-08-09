@@ -1,10 +1,14 @@
 use crate::{
-    application::ports::*,
+    application::{
+        ports::*,
+        services::AuthorizationHelper,
+    },
     domain::{
         entities::*,
         errors::{DomainError, DomainResult},
     },
 };
+use async_trait::async_trait;
 use std::sync::Arc;
 use tracing::{info, instrument, warn};
 
@@ -27,7 +31,16 @@ impl ClientManagementService {
             auth_service,
         }
     }
+}
 
+#[async_trait]
+impl AuthorizationHelper for ClientManagementService {
+    fn auth_service(&self) -> &Arc<dyn AuthorizationService> {
+        &self.auth_service
+    }
+}
+
+impl ClientManagementService {
     /// List clients in a realm with optional filtering
     #[instrument(skip(self), fields(realm = %realm))]
     pub async fn list_clients(
@@ -37,13 +50,7 @@ impl ClientManagementService {
         context: &AuthorizationContext,
     ) -> DomainResult<Vec<Client>> {
         // Check permissions
-        self.auth_service
-            .check_permission(context, resources::CLIENTS, actions::VIEW)
-            .await
-            .map_err(|_e| DomainError::AuthorizationFailed {
-                user_id: context.user_id.clone().unwrap_or_default(),
-                permission: format!("{}:{}", resources::CLIENTS, actions::VIEW),
-            })?;
+        self.check_permission(context, resources::CLIENTS, actions::VIEW).await?;
 
         info!("Listing clients in realm '{}' with filter", realm);
 
@@ -62,13 +69,7 @@ impl ClientManagementService {
         context: &AuthorizationContext,
     ) -> DomainResult<Client> {
         // Check permissions
-        self.auth_service
-            .check_permission(context, resources::CLIENTS, actions::VIEW)
-            .await
-            .map_err(|_e| DomainError::AuthorizationFailed {
-                user_id: context.user_id.clone().unwrap_or_default(),
-                permission: format!("{}:{}", resources::CLIENTS, actions::VIEW),
-            })?;
+        self.check_permission(context, resources::CLIENTS, actions::VIEW).await?;
 
         info!("Getting client '{}' from realm '{}'", client_id, realm);
 
@@ -91,13 +92,7 @@ impl ClientManagementService {
         context: &AuthorizationContext,
     ) -> DomainResult<EntityId> {
         // Check permissions
-        self.auth_service
-            .check_permission(context, resources::CLIENTS, actions::CREATE)
-            .await
-            .map_err(|_e| DomainError::AuthorizationFailed {
-                user_id: context.user_id.clone().unwrap_or_default(),
-                permission: format!("{}:{}", resources::CLIENTS, actions::CREATE),
-            })?;
+        self.check_permission(context, resources::CLIENTS, actions::CREATE).await?;
 
         info!(
             "Creating client '{}' in realm '{}'",
@@ -158,13 +153,7 @@ impl ClientManagementService {
         context: &AuthorizationContext,
     ) -> DomainResult<()> {
         // Check permissions
-        self.auth_service
-            .check_permission(context, resources::CLIENTS, actions::UPDATE)
-            .await
-            .map_err(|_e| DomainError::AuthorizationFailed {
-                user_id: context.user_id.clone().unwrap_or_default(),
-                permission: format!("{}:{}", resources::CLIENTS, actions::UPDATE),
-            })?;
+        self.check_permission(context, resources::CLIENTS, actions::UPDATE).await?;
 
         info!("Updating client '{}' in realm '{}'", client_id, realm);
 
@@ -214,13 +203,7 @@ impl ClientManagementService {
         context: &AuthorizationContext,
     ) -> DomainResult<()> {
         // Check permissions
-        self.auth_service
-            .check_permission(context, resources::CLIENTS, actions::DELETE)
-            .await
-            .map_err(|_e| DomainError::AuthorizationFailed {
-                user_id: context.user_id.clone().unwrap_or_default(),
-                permission: format!("{}:{}", resources::CLIENTS, actions::DELETE),
-            })?;
+        self.check_permission(context, resources::CLIENTS, actions::DELETE).await?;
 
         info!("Deleting client '{}' from realm '{}'", client_id, realm);
 
@@ -266,13 +249,7 @@ impl ClientManagementService {
         context: &AuthorizationContext,
     ) -> DomainResult<String> {
         // Check permissions
-        self.auth_service
-            .check_permission(context, resources::CLIENTS, actions::VIEW)
-            .await
-            .map_err(|_e| DomainError::AuthorizationFailed {
-                user_id: context.user_id.clone().unwrap_or_default(),
-                permission: format!("{}:{}", resources::CLIENTS, actions::VIEW),
-            })?;
+        self.check_permission(context, resources::CLIENTS, actions::VIEW).await?;
 
         info!(
             "Getting secret for client '{}' in realm '{}'",
@@ -297,13 +274,7 @@ impl ClientManagementService {
         context: &AuthorizationContext,
     ) -> DomainResult<String> {
         // Check permissions
-        self.auth_service
-            .check_permission(context, resources::CLIENTS, actions::UPDATE)
-            .await
-            .map_err(|_e| DomainError::AuthorizationFailed {
-                user_id: context.user_id.clone().unwrap_or_default(),
-                permission: format!("{}:{}", resources::CLIENTS, actions::UPDATE),
-            })?;
+        self.check_permission(context, resources::CLIENTS, actions::UPDATE).await?;
 
         info!(
             "Regenerating secret for client '{}' in realm '{}'",
@@ -369,13 +340,7 @@ impl ClientManagementService {
         context: &AuthorizationContext,
     ) -> DomainResult<()> {
         // Check permissions
-        self.auth_service
-            .check_permission(context, resources::CLIENTS, actions::UPDATE)
-            .await
-            .map_err(|_e| DomainError::AuthorizationFailed {
-                user_id: context.user_id.clone().unwrap_or_default(),
-                permission: format!("{}:{}", resources::CLIENTS, actions::UPDATE),
-            })?;
+        self.check_permission(context, resources::CLIENTS, actions::UPDATE).await?;
 
         info!(
             "Setting client '{}' enabled status to {} in realm '{}'",

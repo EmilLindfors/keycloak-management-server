@@ -3,14 +3,13 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use keycloak_domain::{
     application::ports::{
-        repository::KeycloakRepository,
-        events::EventPublisher,
-        auth::AuthorizationService,
+        repository::{KeycloakRepository, UserSession},
+        events::{EventPublisher, DomainEvent, EventError},
+        auth::{AuthorizationService, AuthorizationContext, Permission},
     },
     domain::{
         entities::*,
-        errors::{DomainError, DomainResult},
-        events::DomainEvent,
+        errors::{DomainError, DomainResult, AuthError},
     },
 };
 
@@ -30,13 +29,20 @@ pub struct MockKeycloakRepository {
 impl MockKeycloakRepository {
     pub fn new() -> Self {
         let mut realms = Vec::new();
-        // Add default master realm
-        realms.push(Realm::new("master".to_string()).expect("Failed to create master realm"));
+        // Add default test realm (avoiding "master" as it's reserved)
+        realms.push(Realm::new("test-realm".to_string()).expect("Failed to create test realm"));
+        
+        // Add default test client
+        let mut clients = HashMap::new();
+        let mut test_client = Client::confidential_client("test-client".to_string())
+            .expect("Failed to create test client");
+        test_client.id = Some(EntityId::from("test-client-id"));
+        clients.insert("test-realm".to_string(), vec![test_client]);
         
         Self {
             users: Arc::new(Mutex::new(HashMap::new())),
             realms: Arc::new(Mutex::new(realms)),
-            clients: Arc::new(Mutex::new(HashMap::new())),
+            clients: Arc::new(Mutex::new(clients)),
             groups: Arc::new(Mutex::new(HashMap::new())),
             roles: Arc::new(Mutex::new(HashMap::new())),
             user_counter: Arc::new(Mutex::new(0)),
@@ -52,7 +58,7 @@ impl MockKeycloakRepository {
     
     fn check_should_fail(&self) -> DomainResult<()> {
         if *self.should_fail.lock().unwrap() {
-            Err(DomainError::ExternalServiceError {
+            Err(DomainError::ExternalService {
                 service: "mock-keycloak".to_string(),
                 message: "Mock failure enabled".to_string(),
             })
@@ -95,9 +101,9 @@ impl KeycloakRepository for MockKeycloakRepository {
             }
         }
         
-        Err(DomainError::EntityNotFound {
-            entity_type: "User".to_string(),
-            entity_id: user_id.to_string(),
+        Err(DomainError::UserNotFound {
+            user_id: user_id.to_string(),
+            realm: realm.to_string(),
         })
     }
     
@@ -179,18 +185,18 @@ impl KeycloakRepository for MockKeycloakRepository {
         
         let user_id = self.generate_user_id();
         let mut new_user = user.clone();
-        new_user.id = Some(user_id.clone());
+        new_user.id = Some(EntityId::from(user_id.clone()));
         
         let mut users = self.users.lock().unwrap();
         users.entry(realm.to_string()).or_insert_with(Vec::new).push(new_user);
         
-        Ok(user_id)
+        Ok(EntityId::from(user_id))
     }
     
     async fn update_user(&self, realm: &str, user: &User) -> DomainResult<()> {
         self.check_should_fail()?;
         
-        let user_id = user.id.as_ref().ok_or_else(|| DomainError::ValidationError {
+        let user_id = user.id.as_ref().ok_or_else(|| DomainError::Validation {
             field: "id".to_string(),
             message: "User ID is required for update".to_string(),
         })?;
@@ -205,9 +211,9 @@ impl KeycloakRepository for MockKeycloakRepository {
             }
         }
         
-        Err(DomainError::EntityNotFound {
-            entity_type: "User".to_string(),
-            entity_id: user_id.clone(),
+        Err(DomainError::UserNotFound {
+            user_id: user_id.to_string(),
+            realm: realm.to_string(),
         })
     }
     
@@ -222,15 +228,14 @@ impl KeycloakRepository for MockKeycloakRepository {
             if realm_users.len() < initial_len {
                 Ok(())
             } else {
-                Err(DomainError::EntityNotFound {
-                    entity_type: "User".to_string(),
-                    entity_id: user_id.to_string(),
+                Err(DomainError::UserNotFound {
+                    user_id: user_id.to_string(),
+                    realm: realm.to_string(),
                 })
             }
         } else {
-            Err(DomainError::EntityNotFound {
-                entity_type: "Realm".to_string(),
-                entity_id: realm.to_string(),
+            Err(DomainError::RealmNotFound {
+                realm: realm.to_string(),
             })
         }
     }
@@ -270,9 +275,8 @@ impl KeycloakRepository for MockKeycloakRepository {
             }
         }
         
-        Err(DomainError::EntityNotFound {
-            entity_type: "Realm".to_string(),
-            entity_id: realm.to_string(),
+        Err(DomainError::RealmNotFound {
+            realm: realm.to_string(),
         })
     }
     
@@ -291,15 +295,14 @@ impl KeycloakRepository for MockKeycloakRepository {
         // Check if realm already exists
         for existing in realms.iter() {
             if existing.realm == realm.realm {
-                return Err(DomainError::EntityAlreadyExists {
-                    entity_type: "Realm".to_string(),
-                    entity_id: realm.realm.clone(),
+                return Err(DomainError::RealmAlreadyExists {
+                    realm: realm.realm.clone(),
                 });
             }
         }
         
         realms.push(realm.clone());
-        Ok(realm.realm.clone())
+        Ok(EntityId::from(realm.realm.clone()))
     }
     
     async fn update_realm(&self, realm: &Realm) -> DomainResult<()> {
@@ -313,9 +316,8 @@ impl KeycloakRepository for MockKeycloakRepository {
             }
         }
         
-        Err(DomainError::EntityNotFound {
-            entity_type: "Realm".to_string(),
-            entity_id: realm.realm.clone(),
+        Err(DomainError::RealmNotFound {
+            realm: realm.realm.clone(),
         })
     }
     
@@ -329,9 +331,8 @@ impl KeycloakRepository for MockKeycloakRepository {
         if realms.len() < initial_len {
             Ok(())
         } else {
-            Err(DomainError::EntityNotFound {
-                entity_type: "Realm".to_string(),
-                entity_id: realm.to_string(),
+            Err(DomainError::RealmNotFound {
+                realm: realm.to_string(),
             })
         }
     }
@@ -343,15 +344,15 @@ impl KeycloakRepository for MockKeycloakRepository {
         let clients = self.clients.lock().unwrap();
         if let Some(realm_clients) = clients.get(realm) {
             for client in realm_clients {
-                if client.id.as_ref().map(|id| id.as_str()) == Some(client_id) {
+                if client.client_id == client_id {
                     return Ok(client.clone());
                 }
             }
         }
         
-        Err(DomainError::EntityNotFound {
-            entity_type: "Client".to_string(),
-            entity_id: client_id.to_string(),
+        Err(DomainError::ClientNotFound {
+            client_id: client_id.to_string(),
+            realm: realm.to_string(),
         })
     }
     
@@ -407,18 +408,18 @@ impl KeycloakRepository for MockKeycloakRepository {
         
         let client_id = self.generate_client_id();
         let mut new_client = client.clone();
-        new_client.id = Some(client_id.clone());
+        new_client.id = Some(EntityId::from(client_id.clone()));
         
         let mut clients = self.clients.lock().unwrap();
         clients.entry(realm.to_string()).or_insert_with(Vec::new).push(new_client);
         
-        Ok(client_id)
+        Ok(EntityId::from(client_id))
     }
     
     async fn update_client(&self, realm: &str, client: &Client) -> DomainResult<()> {
         self.check_should_fail()?;
         
-        let client_id = client.id.as_ref().ok_or_else(|| DomainError::ValidationError {
+        let client_id = client.id.as_ref().ok_or_else(|| DomainError::Validation {
             field: "id".to_string(),
             message: "Client ID is required for update".to_string(),
         })?;
@@ -433,9 +434,9 @@ impl KeycloakRepository for MockKeycloakRepository {
             }
         }
         
-        Err(DomainError::EntityNotFound {
-            entity_type: "Client".to_string(),
-            entity_id: client_id.clone(),
+        Err(DomainError::ClientNotFound {
+            client_id: client_id.to_string(),
+            realm: realm.to_string(),
         })
     }
     
@@ -450,15 +451,14 @@ impl KeycloakRepository for MockKeycloakRepository {
             if realm_clients.len() < initial_len {
                 Ok(())
             } else {
-                Err(DomainError::EntityNotFound {
-                    entity_type: "Client".to_string(),
-                    entity_id: client_id.to_string(),
+                Err(DomainError::ClientNotFound {
+                    client_id: client_id.to_string(),
+                    realm: realm.to_string(),
                 })
             }
         } else {
-            Err(DomainError::EntityNotFound {
-                entity_type: "Realm".to_string(),
-                entity_id: realm.to_string(),
+            Err(DomainError::RealmNotFound {
+                realm: realm.to_string(),
             })
         }
     }
@@ -476,24 +476,58 @@ impl KeycloakRepository for MockKeycloakRepository {
     // Additional methods would continue here for groups, roles, etc.
     // For brevity, I'll implement the essential ones and add placeholders for others
     
-    async fn list_groups(&self, realm: &str, _filter: &GroupFilter) -> DomainResult<Vec<Group>> {
+    async fn list_groups(&self, realm: &str, filter: &GroupFilter) -> DomainResult<Vec<Group>> {
         self.check_should_fail()?;
         
         let groups = self.groups.lock().unwrap();
-        Ok(groups.get(realm).cloned().unwrap_or_default())
+        let mut realm_groups = groups.get(realm).cloned().unwrap_or_default();
+        
+        // Apply filters
+        if let Some(ref search) = filter.search {
+            if filter.exact.unwrap_or(false) {
+                // Exact match
+                realm_groups.retain(|g| g.name == *search);
+            } else {
+                // Partial match
+                realm_groups.retain(|g| g.name.contains(search));
+            }
+        }
+        
+        // Apply pagination
+        if let Some(first) = filter.first {
+            if first > 0 {
+                realm_groups = realm_groups.into_iter().skip(first as usize).collect();
+            }
+        }
+        
+        if let Some(max) = filter.max {
+            realm_groups.truncate(max as usize);
+        }
+        
+        Ok(realm_groups)
     }
     
     async fn create_group(&self, realm: &str, group: &Group) -> DomainResult<EntityId> {
         self.check_should_fail()?;
         
+        let mut groups = self.groups.lock().unwrap();
+        let realm_groups = groups.entry(realm.to_string()).or_insert_with(Vec::new);
+        
+        // Check for duplicate names at the same level
+        if realm_groups.iter().any(|g| g.name == group.name && g.path == group.path) {
+            return Err(DomainError::AlreadyExists {
+                entity_type: "group".to_string(),
+                identifier: group.name.clone(),
+            });
+        }
+        
         let group_id = self.generate_group_id();
         let mut new_group = group.clone();
-        new_group.id = Some(group_id.clone());
+        new_group.id = Some(EntityId::from(group_id.clone()));
         
-        let mut groups = self.groups.lock().unwrap();
-        groups.entry(realm.to_string()).or_insert_with(Vec::new).push(new_group);
+        realm_groups.push(new_group);
         
-        Ok(group_id)
+        Ok(EntityId::from(group_id))
     }
     
     // Placeholder implementations for other required methods
@@ -512,33 +546,14 @@ impl KeycloakRepository for MockKeycloakRepository {
         Ok(())
     }
     
-    async fn get_user_role_mappings(&self, _realm: &str, _user_id: &str) -> DomainResult<RoleMappings> {
+    async fn get_user_role_mappings(&self, _realm: &str, _user_id: &str) -> DomainResult<RoleMapping> {
         self.check_should_fail()?;
-        Ok(RoleMappings {
+        Ok(RoleMapping {
             realm_mappings: vec![],
             client_mappings: std::collections::HashMap::new(),
         })
     }
     
-    async fn assign_realm_role_to_user(&self, _realm: &str, _user_id: &str, _roles: &[Role]) -> DomainResult<()> {
-        self.check_should_fail()?;
-        Ok(())
-    }
-    
-    async fn remove_realm_role_from_user(&self, _realm: &str, _user_id: &str, _roles: &[Role]) -> DomainResult<()> {
-        self.check_should_fail()?;
-        Ok(())
-    }
-    
-    async fn assign_client_role_to_user(&self, _realm: &str, _user_id: &str, _client_id: &str, _roles: &[Role]) -> DomainResult<()> {
-        self.check_should_fail()?;
-        Ok(())
-    }
-    
-    async fn remove_client_role_from_user(&self, _realm: &str, _user_id: &str, _client_id: &str, _roles: &[Role]) -> DomainResult<()> {
-        self.check_should_fail()?;
-        Ok(())
-    }
     
     async fn list_realm_roles(&self, _realm: &str, _filter: &RoleFilter) -> DomainResult<Vec<Role>> {
         self.check_should_fail()?;
@@ -552,40 +567,219 @@ impl KeycloakRepository for MockKeycloakRepository {
         Ok(vec![])
     }
     
-    async fn create_realm_role(&self, _realm: &str, _role: &Role) -> DomainResult<()> {
-        self.check_should_fail()?;
-        Ok(())
-    }
-    
-    async fn create_client_role(&self, _realm: &str, _client_id: &str, _role: &Role) -> DomainResult<()> {
-        self.check_should_fail()?;
-        Ok(())
-    }
-    
-    async fn update_realm_role(&self, _realm: &str, _role_name: &str, _role: &Role) -> DomainResult<()> {
-        self.check_should_fail()?;
-        Ok(())
-    }
     
     async fn delete_realm_role(&self, _realm: &str, _role_name: &str) -> DomainResult<()> {
         self.check_should_fail()?;
         Ok(())
     }
     
-    async fn find_group_by_id(&self, _realm: &str, _group_id: &str) -> DomainResult<Group> {
+    async fn find_group_by_id(&self, realm: &str, group_id: &str) -> DomainResult<Group> {
         self.check_should_fail()?;
-        Err(DomainError::EntityNotFound {
-            entity_type: "Group".to_string(),
-            entity_id: _group_id.to_string(),
+        
+        let groups = self.groups.lock().unwrap();
+        if let Some(realm_groups) = groups.get(realm) {
+            for group in realm_groups {
+                if group.id.as_ref().map(|id| id.as_str()) == Some(group_id) {
+                    return Ok(group.clone());
+                }
+            }
+        }
+        
+        Err(DomainError::GroupNotFound {
+            group_id: group_id.to_string(),
+            realm: realm.to_string(),
         })
     }
     
-    async fn update_group(&self, _realm: &str, _group: &Group) -> DomainResult<()> {
+    async fn update_group(&self, realm: &str, group: &Group) -> DomainResult<()> {
+        self.check_should_fail()?;
+        
+        let group_id = group.id.as_ref().ok_or_else(|| DomainError::Validation {
+            field: "id".to_string(),
+            message: "Group ID is required for update".to_string(),
+        })?;
+        
+        let mut groups = self.groups.lock().unwrap();
+        if let Some(realm_groups) = groups.get_mut(realm) {
+            for existing_group in realm_groups.iter_mut() {
+                if existing_group.id.as_ref() == Some(group_id) {
+                    *existing_group = group.clone();
+                    return Ok(());
+                }
+            }
+        }
+        
+        Err(DomainError::GroupNotFound {
+            group_id: group_id.to_string(),
+            realm: realm.to_string(),
+        })
+    }
+    
+    async fn delete_group(&self, realm: &str, group_id: &str) -> DomainResult<()> {
+        self.check_should_fail()?;
+        
+        let mut groups = self.groups.lock().unwrap();
+        if let Some(realm_groups) = groups.get_mut(realm) {
+            let initial_len = realm_groups.len();
+            realm_groups.retain(|g| g.id.as_ref().map(|id| id.as_str()) != Some(group_id));
+            
+            if realm_groups.len() < initial_len {
+                Ok(())
+            } else {
+                Err(DomainError::GroupNotFound {
+                    group_id: group_id.to_string(),
+                    realm: realm.to_string(),
+                })
+            }
+        } else {
+            Err(DomainError::RealmNotFound {
+                realm: realm.to_string(),
+            })
+        }
+    }
+
+    // Missing methods from KeycloakRepository trait
+    async fn list_realms_with_filter(&self, _filter: &RealmFilter) -> DomainResult<Vec<Realm>> {
+        self.check_should_fail()?;
+        let realms = self.realms.lock().unwrap();
+        Ok(realms.clone())
+    }
+
+    async fn find_group_by_path(&self, realm: &str, path: &str) -> DomainResult<Option<Group>> {
+        self.check_should_fail()?;
+        
+        let groups = self.groups.lock().unwrap();
+        if let Some(realm_groups) = groups.get(realm) {
+            for group in realm_groups {
+                if group.path == path {
+                    return Ok(Some(group.clone()));
+                }
+            }
+        }
+        
+        Ok(None)
+    }
+
+    async fn find_realm_role_by_name(&self, _realm: &str, _role_name: &str) -> DomainResult<Role> {
+        self.check_should_fail()?;
+        Err(DomainError::RoleNotFound {
+            role_name: _role_name.to_string(),
+            realm: _realm.to_string(),
+        })
+    }
+
+    async fn find_client_role_by_name(&self, _realm: &str, _client_id: &str, _role_name: &str) -> DomainResult<Role> {
+        self.check_should_fail()?;
+        Err(DomainError::RoleNotFound {
+            role_name: _role_name.to_string(),
+            realm: _realm.to_string(),
+        })
+    }
+
+    async fn create_realm_role(&self, _realm: &str, _role: &Role) -> DomainResult<EntityId> {
+        self.check_should_fail()?;
+        Ok(EntityId::new())
+    }
+
+    async fn create_client_role(&self, _realm: &str, _client_id: &str, _role: &Role) -> DomainResult<EntityId> {
+        self.check_should_fail()?;
+        Ok(EntityId::new())
+    }
+
+    async fn update_realm_role(&self, _realm: &str, _role: &Role) -> DomainResult<()> {
         self.check_should_fail()?;
         Ok(())
     }
-    
-    async fn delete_group(&self, _realm: &str, _group_id: &str) -> DomainResult<()> {
+
+    async fn update_client_role(&self, _realm: &str, _client_id: &str, _role: &Role) -> DomainResult<()> {
+        self.check_should_fail()?;
+        Ok(())
+    }
+
+    async fn delete_client_role(&self, _realm: &str, _client_id: &str, _role_name: &str) -> DomainResult<()> {
+        self.check_should_fail()?;
+        Ok(())
+    }
+
+    async fn add_user_realm_roles(&self, _realm: &str, _user_id: &str, _roles: &[String]) -> DomainResult<()> {
+        self.check_should_fail()?;
+        Ok(())
+    }
+
+    async fn remove_user_realm_roles(&self, _realm: &str, _user_id: &str, _roles: &[String]) -> DomainResult<()> {
+        self.check_should_fail()?;
+        Ok(())
+    }
+
+    async fn add_user_client_roles(&self, _realm: &str, _user_id: &str, _client_id: &str, _roles: &[String]) -> DomainResult<()> {
+        self.check_should_fail()?;
+        Ok(())
+    }
+
+    async fn remove_user_client_roles(&self, _realm: &str, _user_id: &str, _client_id: &str, _roles: &[String]) -> DomainResult<()> {
+        self.check_should_fail()?;
+        Ok(())
+    }
+
+    async fn get_group_role_mappings(&self, _realm: &str, _group_id: &str) -> DomainResult<RoleMapping> {
+        self.check_should_fail()?;
+        Ok(RoleMapping {
+            realm_mappings: vec![],
+            client_mappings: std::collections::HashMap::new(),
+        })
+    }
+
+    async fn add_group_realm_roles(&self, _realm: &str, _group_id: &str, _roles: &[String]) -> DomainResult<()> {
+        self.check_should_fail()?;
+        Ok(())
+    }
+
+    async fn remove_group_realm_roles(&self, _realm: &str, _group_id: &str, _roles: &[String]) -> DomainResult<()> {
+        self.check_should_fail()?;
+        Ok(())
+    }
+
+    async fn add_group_client_roles(&self, _realm: &str, _group_id: &str, _client_id: &str, _roles: &[String]) -> DomainResult<()> {
+        self.check_should_fail()?;
+        Ok(())
+    }
+
+    async fn remove_group_client_roles(&self, _realm: &str, _group_id: &str, _client_id: &str, _roles: &[String]) -> DomainResult<()> {
+        self.check_should_fail()?;
+        Ok(())
+    }
+
+    async fn get_user_sessions(&self, _realm: &str, _user_id: &str) -> DomainResult<Vec<UserSession>> {
+        self.check_should_fail()?;
+        Ok(vec![])
+    }
+
+    async fn logout_user(&self, _realm: &str, _user_id: &str) -> DomainResult<()> {
+        self.check_should_fail()?;
+        Ok(())
+    }
+
+    async fn logout_all_sessions(&self, _realm: &str) -> DomainResult<()> {
+        self.check_should_fail()?;
+        Ok(())
+    }
+
+    async fn delete_session(&self, _realm: &str, _session_id: &str) -> DomainResult<()> {
+        self.check_should_fail()?;
+        Ok(())
+    }
+
+    async fn get_user_federated_identities(&self, _realm: &str, _user_id: &str) -> DomainResult<Vec<FederatedIdentity>> {
+        self.check_should_fail()?;
+        Ok(vec![])
+    }
+
+    async fn add_user_federated_identity(&self, _realm: &str, _user_id: &str, _provider: &str, _identity: &FederatedIdentity) -> DomainResult<()> {
+        self.check_should_fail()?;
+        Ok(())
+    }
+
+    async fn remove_user_federated_identity(&self, _realm: &str, _user_id: &str, _provider: &str) -> DomainResult<()> {
         self.check_should_fail()?;
         Ok(())
     }
@@ -620,15 +814,35 @@ impl MockEventPublisher {
 
 #[async_trait]
 impl EventPublisher for MockEventPublisher {
-    async fn publish(&self, event: DomainEvent) -> DomainResult<()> {
+    async fn publish(&self, event: DomainEvent) -> Result<(), EventError> {
         if *self.should_fail.lock().unwrap() {
-            return Err(DomainError::ExternalServiceError {
-                service: "event-publisher".to_string(),
+            return Err(EventError::PublishFailed {
                 message: "Mock failure enabled".to_string(),
             });
         }
         
         self.published_events.lock().unwrap().push(event);
+        Ok(())
+    }
+
+    async fn publish_batch(&self, events: Vec<DomainEvent>) -> Result<(), EventError> {
+        if *self.should_fail.lock().unwrap() {
+            return Err(EventError::PublishFailed {
+                message: "Mock failure enabled".to_string(),
+            });
+        }
+        
+        self.published_events.lock().unwrap().extend(events);
+        Ok(())
+    }
+
+    async fn flush(&self) -> Result<(), EventError> {
+        if *self.should_fail.lock().unwrap() {
+            return Err(EventError::PublishFailed {
+                message: "Mock failure enabled".to_string(),
+            });
+        }
+        
         Ok(())
     }
 }
@@ -669,35 +883,55 @@ impl AuthorizationService for MockAuthorizationService {
         _context: &AuthorizationContext,
         resource: &str,
         action: &str,
-    ) -> DomainResult<()> {
+    ) -> Result<bool, AuthError> {
         if *self.should_fail.lock().unwrap() {
-            return Err(DomainError::AuthorizationFailed {
-                user_id: "test-user".to_string(),
-                permission: format!("{}:{}", resource, action),
+            return Err(AuthError::InsufficientPermissions {
+                action: format!("{}:{}", resource, action),
             });
         }
         
         let permissions = self.allowed_permissions.lock().unwrap();
         let required_permission = format!("{}:{}", resource, action);
         
-        if permissions.contains(&"*".to_string()) || permissions.contains(&required_permission) {
-            Ok(())
-        } else {
-            Err(DomainError::AuthorizationFailed {
-                user_id: "test-user".to_string(),
-                permission: required_permission,
-            })
-        }
+        Ok(permissions.contains(&"*".to_string()) || permissions.contains(&required_permission))
     }
     
-    async fn get_user_permissions(&self, _context: &AuthorizationContext) -> DomainResult<Vec<Permission>> {
+    async fn get_user_permissions(
+        &self,
+        _realm: &str,
+        _user_id: &str,
+    ) -> Result<Vec<Permission>, AuthError> {
         if *self.should_fail.lock().unwrap() {
-            return Err(DomainError::ExternalServiceError {
-                service: "authorization".to_string(),
-                message: "Mock failure enabled".to_string(),
+            return Err(AuthError::TokenValidationFailed {
+                reason: "Mock failure enabled".to_string(),
             });
         }
         
+        Ok(vec![]) // Mock implementation
+    }
+    
+    async fn has_realm_role(
+        &self,
+        _context: &AuthorizationContext,
+        _role: &str,
+    ) -> Result<bool, AuthError> {
+        Ok(true) // Mock implementation
+    }
+    
+    async fn has_client_role(
+        &self,
+        _context: &AuthorizationContext,
+        _client_id: &str,
+        _role: &str,
+    ) -> Result<bool, AuthError> {
+        Ok(true) // Mock implementation
+    }
+    
+    async fn get_effective_roles(
+        &self,
+        _realm: &str,
+        _user_id: &str,
+    ) -> Result<Vec<String>, AuthError> {
         Ok(vec![]) // Mock implementation
     }
 }

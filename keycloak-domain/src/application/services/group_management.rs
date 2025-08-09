@@ -1,10 +1,14 @@
 use crate::{
-    application::ports::*,
+    application::{
+        ports::*,
+        services::AuthorizationHelper,
+    },
     domain::{
         entities::*,
         errors::{DomainError, DomainResult},
     },
 };
+use async_trait::async_trait;
 use std::sync::Arc;
 use tracing::{info, instrument, warn};
 
@@ -27,7 +31,16 @@ impl GroupManagementService {
             auth_service,
         }
     }
+}
 
+#[async_trait]
+impl AuthorizationHelper for GroupManagementService {
+    fn auth_service(&self) -> &Arc<dyn AuthorizationService> {
+        &self.auth_service
+    }
+}
+
+impl GroupManagementService {
     /// List groups in a realm with optional filtering
     #[instrument(skip(self), fields(realm = %realm))]
     pub async fn list_groups(
@@ -37,13 +50,7 @@ impl GroupManagementService {
         context: &AuthorizationContext,
     ) -> DomainResult<Vec<Group>> {
         // Check permissions
-        self.auth_service
-            .check_permission(context, resources::GROUPS, actions::VIEW)
-            .await
-            .map_err(|_e| DomainError::AuthorizationFailed {
-                user_id: context.user_id.clone().unwrap_or_default(),
-                permission: format!("{}:{}", resources::GROUPS, actions::VIEW),
-            })?;
+        self.check_permission(context, resources::GROUPS, actions::VIEW).await?;
 
         info!("Listing groups in realm '{}' with filter", realm);
 
@@ -62,13 +69,7 @@ impl GroupManagementService {
         context: &AuthorizationContext,
     ) -> DomainResult<Group> {
         // Check permissions
-        self.auth_service
-            .check_permission(context, resources::GROUPS, actions::VIEW)
-            .await
-            .map_err(|_e| DomainError::AuthorizationFailed {
-                user_id: context.user_id.clone().unwrap_or_default(),
-                permission: format!("{}:{}", resources::GROUPS, actions::VIEW),
-            })?;
+        self.check_permission(context, resources::GROUPS, actions::VIEW).await?;
 
         info!("Getting group '{}' from realm '{}'", group_id, realm);
 
@@ -91,31 +92,35 @@ impl GroupManagementService {
         context: &AuthorizationContext,
     ) -> DomainResult<EntityId> {
         // Check permissions
-        self.auth_service
-            .check_permission(context, resources::GROUPS, actions::CREATE)
-            .await
-            .map_err(|_e| DomainError::AuthorizationFailed {
-                user_id: context.user_id.clone().unwrap_or_default(),
-                permission: format!("{}:{}", resources::GROUPS, actions::CREATE),
-            })?;
+        self.check_permission(context, resources::GROUPS, actions::CREATE).await?;
 
         info!("Creating group '{}' in realm '{}'", request.name, realm);
 
         // Validate the request
         request.validate()?;
 
-        // Check if group already exists by name
-        let existing_groups = self.repository.list_groups(realm, &GroupFilter {
-            search: Some(request.name.clone()),
-            exact: Some(true),
-            ..Default::default()
-        }).await?;
-        
-        if !existing_groups.is_empty() {
-            return Err(DomainError::AlreadyExists {
-                entity_type: "group".to_string(),
-                identifier: request.name.clone(),
-            });
+        // Check if group already exists by path (if provided) or name
+        if let Some(ref path) = request.path {
+            if let Ok(Some(_)) = self.repository.find_group_by_path(realm, path).await {
+                return Err(DomainError::AlreadyExists {
+                    entity_type: "group".to_string(),
+                    identifier: path.clone(),
+                });
+            }
+        } else {
+            // Check by name only if no path is provided
+            let existing_groups = self.repository.list_groups(realm, &GroupFilter {
+                search: Some(request.name.clone()),
+                exact: Some(true),
+                ..Default::default()
+            }).await?;
+            
+            if !existing_groups.is_empty() {
+                return Err(DomainError::AlreadyExists {
+                    entity_type: "group".to_string(),
+                    identifier: request.name.clone(),
+                });
+            }
         }
 
         // Create the domain group
@@ -158,13 +163,7 @@ impl GroupManagementService {
         context: &AuthorizationContext,
     ) -> DomainResult<()> {
         // Check permissions
-        self.auth_service
-            .check_permission(context, resources::GROUPS, actions::UPDATE)
-            .await
-            .map_err(|_e| DomainError::AuthorizationFailed {
-                user_id: context.user_id.clone().unwrap_or_default(),
-                permission: format!("{}:{}", resources::GROUPS, actions::UPDATE),
-            })?;
+        self.check_permission(context, resources::GROUPS, actions::UPDATE).await?;
 
         info!("Updating group '{}' in realm '{}'", group_id, realm);
 
@@ -220,13 +219,7 @@ impl GroupManagementService {
         context: &AuthorizationContext,
     ) -> DomainResult<()> {
         // Check permissions
-        self.auth_service
-            .check_permission(context, resources::GROUPS, actions::DELETE)
-            .await
-            .map_err(|_e| DomainError::AuthorizationFailed {
-                user_id: context.user_id.clone().unwrap_or_default(),
-                permission: format!("{}:{}", resources::GROUPS, actions::DELETE),
-            })?;
+        self.check_permission(context, resources::GROUPS, actions::DELETE).await?;
 
         info!("Deleting group '{}' from realm '{}'", group_id, realm);
 
@@ -265,13 +258,7 @@ impl GroupManagementService {
         context: &AuthorizationContext,
     ) -> DomainResult<Vec<User>> {
         // Check permissions
-        self.auth_service
-            .check_permission(context, resources::GROUPS, actions::VIEW)
-            .await
-            .map_err(|_e| DomainError::AuthorizationFailed {
-                user_id: context.user_id.clone().unwrap_or_default(),
-                permission: format!("{}:{}", resources::GROUPS, actions::VIEW),
-            })?;
+        self.check_permission(context, resources::GROUPS, actions::VIEW).await?;
 
         info!("Getting members for group '{}' in realm '{}'", group_id, realm);
 
@@ -283,6 +270,88 @@ impl GroupManagementService {
         Ok(members)
     }
 
+    /// Add a user to a group
+    #[instrument(skip(self), fields(realm = %realm, user_id = %user_id, group_id = %group_id))]
+    pub async fn add_user_to_group(
+        &self,
+        realm: &str,
+        user_id: &str,
+        group_id: &str,
+        context: &AuthorizationContext,
+    ) -> DomainResult<()> {
+        // Check permissions
+        self.check_permission(context, resources::GROUPS, actions::UPDATE).await?;
+
+        info!("Adding user '{}' to group '{}' in realm '{}'", user_id, group_id, realm);
+
+        // Verify the group exists
+        let group = self.repository.find_group_by_id(realm, group_id).await?;
+
+        // Add user to group via repository
+        self.repository.add_user_to_group(realm, user_id, group_id).await?;
+
+        // Publish domain event
+        let event = DomainEvent::user_added_to_group(
+            user_id.to_string(),
+            realm.to_string(),
+            "unknown".to_string(), // We don't have username here, but it's required
+            group.path.clone(),
+        )
+        .with_metadata(
+            EventMetadata::new()
+                .with_user_id(context.user_id.clone().unwrap_or_default())
+                .with_correlation_id(uuid::Uuid::new_v4().to_string()),
+        );
+
+        if let Err(e) = self.event_publisher.publish(event).await {
+            warn!("Failed to publish user added to group event: {}", e);
+        }
+
+        info!("Successfully added user '{}' to group '{}'", user_id, group_id);
+        Ok(())
+    }
+
+    /// Remove a user from a group
+    #[instrument(skip(self), fields(realm = %realm, user_id = %user_id, group_id = %group_id))]
+    pub async fn remove_user_from_group(
+        &self,
+        realm: &str,
+        user_id: &str,
+        group_id: &str,
+        context: &AuthorizationContext,
+    ) -> DomainResult<()> {
+        // Check permissions
+        self.check_permission(context, resources::GROUPS, actions::UPDATE).await?;
+
+        info!("Removing user '{}' from group '{}' in realm '{}'", user_id, group_id, realm);
+
+        // Verify the group exists
+        let group = self.repository.find_group_by_id(realm, group_id).await?;
+
+        // Remove user from group via repository
+        self.repository.remove_user_from_group(realm, user_id, group_id).await?;
+
+        // Publish domain event
+        let event = DomainEvent::user_removed_from_group(
+            user_id.to_string(),
+            realm.to_string(),
+            "unknown".to_string(), // We don't have username here, but it's required
+            group.path.clone(),
+        )
+        .with_metadata(
+            EventMetadata::new()
+                .with_user_id(context.user_id.clone().unwrap_or_default())
+                .with_correlation_id(uuid::Uuid::new_v4().to_string()),
+        );
+
+        if let Err(e) = self.event_publisher.publish(event).await {
+            warn!("Failed to publish user removed from group event: {}", e);
+        }
+
+        info!("Successfully removed user '{}' from group '{}'", user_id, group_id);
+        Ok(())
+    }
+
     /// Count total groups in realm
     #[instrument(skip(self), fields(realm = %realm))]
     pub async fn count_groups(
@@ -291,13 +360,7 @@ impl GroupManagementService {
         context: &AuthorizationContext,
     ) -> DomainResult<i64> {
         // Check permissions
-        self.auth_service
-            .check_permission(context, resources::GROUPS, actions::VIEW)
-            .await
-            .map_err(|_e| DomainError::AuthorizationFailed {
-                user_id: context.user_id.clone().unwrap_or_default(),
-                permission: format!("{}:{}", resources::GROUPS, actions::VIEW),
-            })?;
+        self.check_permission(context, resources::GROUPS, actions::VIEW).await?;
 
         info!("Counting groups in realm '{}'", realm);
 
@@ -364,4 +427,5 @@ impl DomainEvent {
             },
         )
     }
+
 }
